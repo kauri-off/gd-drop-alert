@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 
 from PIL import Image, ImageOps
@@ -56,6 +57,70 @@ def tesseract_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def tesseract_version() -> str | None:
+    """Human-readable Tesseract version, or None if unavailable."""
+    if locate_tesseract() is None:
+        return None
+    try:
+        return str(pytesseract.get_tesseract_version())
+    except Exception:
+        return None
+
+
+# --- Auto-install -----------------------------------------------------------
+
+# Ordered preference: try winget first, then Chocolatey, then Scoop. Each entry
+# is (display name, detection command, install command). The first whose CLI is
+# found on PATH is attempted; on failure we fall through to the next.
+_INSTALLERS: list[tuple[str, str, list[str]]] = [
+    ("winget", "winget", [
+        "winget", "install", "--id", "UB-Mannheim.TesseractOCR", "-e",
+        "--accept-source-agreements", "--accept-package-agreements",
+    ]),
+    ("Chocolatey", "choco", ["choco", "install", "tesseract", "-y"]),
+    ("Scoop", "scoop", ["scoop", "install", "tesseract"]),
+]
+
+# CREATE_NO_WINDOW: keep a console from flashing up under the windowed exe.
+_NO_WINDOW = 0x08000000
+
+
+def available_installers() -> list[str]:
+    """Display names of package managers found on this machine, in order."""
+    return [name for name, cli, _ in _INSTALLERS if shutil.which(cli)]
+
+
+def install_tesseract() -> tuple[bool, str, str]:
+    """Try to install Tesseract via the first available package manager.
+
+    Returns (ok, method, detail). ``ok`` is True only if a manager reported
+    success *and* Tesseract is subsequently importable. ``method`` names the
+    manager used (or "none"/"failed"); ``detail`` is a human-readable message.
+    Blocking and slow (may trigger a UAC prompt) — run off the UI thread.
+    """
+    found = [(name, cmd) for name, cli, cmd in _INSTALLERS if shutil.which(cli)]
+    if not found:
+        return (False, "none", "No supported package manager (winget, "
+                               "Chocolatey, or Scoop) was found.")
+
+    errors: list[str] = []
+    for name, cmd in found:
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, creationflags=_NO_WINDOW
+            )
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        if proc.returncode == 0 and tesseract_available():
+            return (True, name, f"Installed via {name}.")
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        msg = tail[-1].strip() if tail else f"exit code {proc.returncode}"
+        errors.append(f"{name}: {msg}")
+
+    return (False, "failed", " | ".join(errors) or "Installation failed.")
 
 
 # --- Preprocessing ----------------------------------------------------------

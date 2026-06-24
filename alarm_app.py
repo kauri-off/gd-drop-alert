@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import os
 import queue
+import threading
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 import capture
@@ -210,6 +212,18 @@ class App:
         self.status_alarm = ttk.Label(st, text="", font=("Segoe UI", 12, "bold"),
                                       anchor="w", width=30)
         self.status_alarm.grid(row=2, column=0, sticky="w")
+
+        # OCR engine -------------------------------------------------------
+        ocr_fr = ttk.LabelFrame(main, text="OCR Engine (Tesseract)", padding=8)
+        ocr_fr.grid(row=5, column=0, columnspan=2, sticky="ew", **pad)
+        ocr_fr.columnconfigure(0, weight=1)
+        self.tess_label = ttk.Label(ocr_fr, text="Checking…", anchor="w", width=46)
+        self.tess_label.grid(row=0, column=0, sticky="w", padx=4)
+        self.tess_install_btn = ttk.Button(ocr_fr, text="Install Tesseract",
+                                            command=self._install_tesseract)
+        self.tess_install_btn.grid(row=0, column=1, sticky="e", padx=4)
+        ttk.Button(ocr_fr, text="Re-check",
+                   command=self._check_tesseract).grid(row=0, column=2, sticky="e", padx=4)
 
     def _labeled_entry(self, parent, text, var, row):
         ttk.Label(parent, text=text).grid(row=row, column=0, sticky="w", pady=2)
@@ -446,18 +460,61 @@ class App:
 
     # --- tesseract ---------------------------------------------------------
     def _check_tesseract(self) -> None:
-        if not ocr.tesseract_available():
-            self.status_detail.config(
-                text="Tesseract OCR not found — install it before monitoring.",
-                foreground="#a00",
-            )
+        version = ocr.tesseract_version()
+        if version:
+            self.tess_label.config(text=f"Installed ✓  (v{version})", foreground="#070")
+            self.tess_install_btn.config(state="disabled")
+        else:
+            self.tess_label.config(
+                text="Not found — required for monitoring.", foreground="#a00")
+            self.tess_install_btn.config(state="normal")
+
+    def _install_tesseract(self) -> None:
+        methods = ocr.available_installers()
+        if not methods:
+            if messagebox.askyesno(
+                "No package manager",
+                "No supported package manager (winget, Chocolatey, or Scoop) "
+                "was found.\n\n"
+                "Open the Tesseract download page in your browser instead?",
+            ):
+                webbrowser.open(TESSERACT_URL)
+            return
+        if not messagebox.askyesno(
+            "Install Tesseract",
+            f"Install Tesseract using {methods[0]}?\n\n"
+            "A Windows User Account Control prompt may appear, and this can "
+            "take a few minutes.",
+        ):
+            return
+        self.tess_install_btn.config(state="disabled")
+        self.tess_label.config(text=f"Installing via {methods[0]}…", foreground="#a60")
+        threading.Thread(target=self._install_worker, daemon=True).start()
+
+    def _install_worker(self) -> None:
+        ok, method, detail = ocr.install_tesseract()
+        # Hop back onto the Tk thread for any UI work.
+        self.root.after(0, lambda: self._install_done(ok, method, detail))
+
+    def _install_done(self, ok: bool, method: str, detail: str) -> None:
+        self._check_tesseract()
+        if ok:
+            messagebox.showinfo("Tesseract", detail)
+            return
+        if messagebox.askyesno(
+            "Install failed",
+            f"Automatic install did not complete.\n\n{detail}\n\n"
+            "Open the Tesseract download page to install it manually?",
+        ):
+            webbrowser.open(TESSERACT_URL)
 
     def _tesseract_warning(self) -> None:
         messagebox.showerror(
             "Tesseract not found",
             "This app needs the Tesseract OCR engine.\n\n"
-            "Install the Windows build, then restart this app.\n\n"
-            f"Download: {TESSERACT_URL}\n\n"
+            "Use the “Install Tesseract” button in the OCR Engine "
+            "section, then press “Re-check”.\n\n"
+            f"Manual download: {TESSERACT_URL}\n\n"
             "If installed in a custom location, set the TESSERACT_CMD "
             "environment variable to the full path of tesseract.exe.",
         )
