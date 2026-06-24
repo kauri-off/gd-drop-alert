@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -26,7 +27,13 @@ import sound
 from logger import EventLogger
 from monitor import Monitor, Settings, Status
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# When frozen by PyInstaller --onefile, __file__ points into the temporary
+# _MEIPASS extraction folder that is deleted on exit, so config/presets/logs
+# written there would not persist. Anchor to the executable's directory instead.
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 PRESETS_DIR = os.path.join(APP_DIR, "presets")
 LOGS_DIR = os.path.join(APP_DIR, "logs")
