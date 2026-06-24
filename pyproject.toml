@@ -1,0 +1,17 @@
+[project]
+name = "screen-float-alarm"
+version = "0.1.0"
+description = "Watch a Geometry Dash stream and alert when the player's percent reaches the drop (with Testmode suppression)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mss>=9.0.1",
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+]
+
+[project.scripts]
+screen-float-alarm = "alarm_app:main"
+
+[tool.uv]
+package = false
