@@ -70,6 +70,8 @@ uv run python selftest.py
      positives, slower to fire).
    - *Min OCR confidence* — raise it if you see misreads in the log.
    - *Poll interval (ms)* — how often to read the screen.
+   - *Alarm duration (cycles, 0=∞)* — auto-stop the alert after this many
+     monitoring cycles; `0` keeps it sounding until you press **Stop Alert**.
 4. Pick an alert **Sound** (or browse a custom WAV) and press **Test sound**.
 5. (Optional) Under **Stream Mute Toggle**, press **Set Button Position** and
    click your stream's mute button. Tick *Click it automatically when the alert

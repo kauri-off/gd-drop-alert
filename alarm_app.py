@@ -50,6 +50,7 @@ DEFAULTS = {
     "confirmations": 3,
     "conf_threshold": 60.0,
     "poll_interval_ms": 500,
+    "alarm_duration_cycles": 0,   # auto-stop alarm after N cycles; 0 = until manually stopped
     "scale": 4,
     "bw_threshold": 140,
     "sound_choice": "Beep",      # preset name or "Custom"
@@ -147,12 +148,14 @@ class App:
         self.confirm_var = tk.StringVar(value=str(self.cfg["confirmations"]))
         self.conf_var = tk.StringVar(value=str(self.cfg["conf_threshold"]))
         self.interval_var = tk.StringVar(value=str(self.cfg["poll_interval_ms"]))
+        self.duration_var = tk.StringVar(value=str(self.cfg["alarm_duration_cycles"]))
 
         self._labeled_entry(trig, "Alert when percent >", self.threshold_var, 0)
         self._labeled_entry(trig, "Hysteresis margin", self.margin_var, 1)
         self._labeled_entry(trig, "Confirmations (frames)", self.confirm_var, 2)
         self._labeled_entry(trig, "Min OCR confidence", self.conf_var, 3)
         self._labeled_entry(trig, "Poll interval (ms)", self.interval_var, 4)
+        self._labeled_entry(trig, "Alarm duration (cycles, 0=∞)", self.duration_var, 5)
 
         # Sound ------------------------------------------------------------
         snd = ttk.LabelFrame(main, text="Alert Sound", padding=8)
@@ -273,6 +276,7 @@ class App:
             confirmations=max(1, self._int(self.confirm_var, 3)),
             conf_threshold=self._float(self.conf_var, 60.0),
             poll_interval_ms=max(100, self._int(self.interval_var, 500)),
+            alarm_duration_cycles=max(0, self._int(self.duration_var, 0)),
             scale=self.cfg["scale"],
             bw_threshold=self.cfg["bw_threshold"],
             alarm_wav=self._current_wav(),
@@ -289,6 +293,7 @@ class App:
             "confirmations": max(1, self._int(self.confirm_var, DEFAULTS["confirmations"])),
             "conf_threshold": self._float(self.conf_var, DEFAULTS["conf_threshold"]),
             "poll_interval_ms": max(100, self._int(self.interval_var, DEFAULTS["poll_interval_ms"])),
+            "alarm_duration_cycles": max(0, self._int(self.duration_var, DEFAULTS["alarm_duration_cycles"])),
             "sound_choice": self.sound_var.get(),
             "mute_toggle_enabled": self.mute_toggle_var.get(),
         })

@@ -43,6 +43,7 @@ class Settings:
     scale: int = 4
     bw_threshold: int = 140
     alarm_wav: str = ""
+    alarm_duration_cycles: int = 0  # auto-stop after N cycles; 0 = until manually stopped
     mute_toggle_enabled: bool = False
     mute_toggle_point: tuple[int, int] | None = None
 
@@ -74,6 +75,8 @@ class Monitor:
         self._below = 0
         self._alarm_on = False
         self._silenced = False
+        self._alarm_cycles = 0  # ticks elapsed since the current alarm fired
+        self._alarm_oneshot = False  # current alarm is a single non-looping pass
 
     # --- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -126,15 +129,25 @@ class Monitor:
         self._below = 0
         self._alarm_on = False
         self._silenced = False
+        self._alarm_cycles = 0
+        self._alarm_oneshot = False
 
     # --- alarm control -----------------------------------------------------
     def _set_alarm(self, on: bool) -> None:
         if on and not self._alarm_on:
             self._alarm_on = True
+            self._alarm_cycles = 0
             s = self._get_settings()
+            # A duration of exactly one cycle means "sound once" (like Test
+            # sound): play a single non-looping pass and let it finish on its
+            # own rather than looping until stopped.
+            self._alarm_oneshot = (s.alarm_duration_cycles == 1)
             try:
                 if s.alarm_wav:
-                    self._player.play_loop(s.alarm_wav)
+                    if self._alarm_oneshot:
+                        self._player.play_once(s.alarm_wav)
+                    else:
+                        self._player.play_loop(s.alarm_wav)
             except Exception:
                 pass
             if self._logger:
@@ -144,10 +157,12 @@ class Monitor:
                 self.click_mute_toggle(s.mute_toggle_point)
         elif not on and self._alarm_on:
             self._alarm_on = False
-            try:
-                self._player.stop()
-            except Exception:
-                pass
+            # A one-shot pass is left to ring out; purging would clip it short.
+            if not self._alarm_oneshot:
+                try:
+                    self._player.stop()
+                except Exception:
+                    pass
             if self._logger:
                 self._logger.log_event(f"alarm cleared (below={self._below})")
 
@@ -212,6 +227,18 @@ class Monitor:
             elif self._alarm_on and self._below >= s.confirmations:
                 self._set_alarm(False)
         # If not valid: ignore this frame entirely (no counter change).
+
+        # Duration cap: auto-stop the alarm after the configured number of
+        # cycles. Treated like a manual silence so it won't immediately
+        # re-fire while the value is still in the danger zone.
+        if self._alarm_on and s.alarm_duration_cycles > 0:
+            self._alarm_cycles += 1
+            if self._alarm_cycles >= s.alarm_duration_cycles:
+                self._silenced = True
+                self._set_alarm(False)
+                if self._logger:
+                    self._logger.log_event(
+                        f"alarm auto-stopped after {s.alarm_duration_cycles} cycles")
 
         return Status(
             value=read.value,
