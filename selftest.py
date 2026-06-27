@@ -69,6 +69,48 @@ def test_monitor_logic() -> None:
     print("monitor logic: OK")
 
 
+def test_testmode_latch() -> None:
+    """Once detected, testmode stays on until percent drops below the value
+    seen at detection, even if the keyword OCR stops matching."""
+    import capture
+    from monitor import Monitor, Settings
+
+    capture.grab = lambda region: object()
+    num = {"it": iter([])}
+    det = {"it": iter([])}
+
+    ocr.read_number = lambda img, **kw: (lambda v, c: ocr.NumberRead(
+        value=v, confidence=c, raw="" if v is None else str(v)))(*next(num["it"]))
+    ocr.read_text = lambda img, **kw: "testmode" if next(det["it"]) else "ok"
+    ocr.keyword_present = lambda text, kw: "testmode" in text
+
+    class FakePlayer:
+        def play_loop(self, w): pass
+        def stop(self): pass
+
+    s = Settings(number_region=(0, 0, 10, 10), testmode_region=(0, 0, 10, 10),
+                 testmode_enabled=True, keyword="Testmode", threshold=50.0,
+                 hysteresis_margin=0.5, confirmations=1, conf_threshold=60.0)
+
+    def run(reads, detects):
+        num["it"] = iter(reads)
+        det["it"] = iter(detects)
+        m = Monitor(lambda: s, FakePlayer(), queue.Queue(maxsize=99))
+        m._reset_state()
+        return [int(m._tick(s).testmode) for _ in reads]
+
+    # Detected at 70, keyword then vanishes but percent holds high -> latched.
+    # Percent dips below 70 -> released; alarm logic can resume.
+    assert run([(70, 90), (80, 90), (90, 90), (69.9, 90)],
+               [True, False, False, False]) == [1, 1, 1, 0]
+
+    # Latch before a readable percent appears: reference is taken on the first
+    # valid frame (60), released only once it reads lower (59).
+    assert run([(None, 90), (60, 90), (80, 90), (59, 90)],
+               [True, False, False, False]) == [1, 1, 1, 0]
+    print("testmode latch: OK")
+
+
 def test_mute_toggle_click() -> None:
     import capture
     import clicker
@@ -113,5 +155,6 @@ if __name__ == "__main__":
     test_parser()
     test_presets()
     test_monitor_logic()
+    test_testmode_latch()
     test_mute_toggle_click()
     print("ALL TESTS PASSED")

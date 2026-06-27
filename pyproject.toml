@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "mss>=9.0.1",
     "pillow>=10.0.0",
+    "pygame-ce>=2.5",
     "pytesseract>=0.3.10",
 ]
 

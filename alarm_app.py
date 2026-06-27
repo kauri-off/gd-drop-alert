@@ -175,8 +175,6 @@ class App:
         self.custom_label.grid(row=2, column=0, columnspan=2, sticky="w")
         ttk.Button(snd, text="Test sound", command=self._test_sound).grid(
             row=3, column=0, sticky="w", pady=6)
-        ttk.Button(snd, text="Stop", command=self._stop_test).grid(
-            row=3, column=1, sticky="w", pady=6)
 
         # Mute toggle ------------------------------------------------------
         # Clicks an on-screen mute button (e.g. a stream's) with the mouse.
@@ -388,9 +386,6 @@ class App:
             self.player.play_once(wav)
         except Exception as exc:
             messagebox.showerror("Playback error", str(exc))
-
-    def _stop_test(self) -> None:
-        self.player.stop()
 
     def _toggle_monitor(self) -> None:
         if self.monitor.running:

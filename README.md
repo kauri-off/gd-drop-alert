@@ -100,7 +100,7 @@ the alert timestamp:
 | `capture.py` | `mss` capture + DPI awareness |
 | `ocr.py` | Pillow preprocessing, Tesseract, float/keyword parsing |
 | `monitor.py` | Background loop + alert state machine |
-| `sound.py` | Preset WAV generation + `winsound` playback |
+| `sound.py` | Preset WAV generation + pygame-ce mixer playback |
 | `region_select.py` | Fullscreen drag-to-select / click-to-pick overlay |
 | `clicker.py` | Synthetic mouse click at a screen point (mute toggle) |
 | `logger.py` | CSV/event logging |

@@ -7,7 +7,7 @@ on the Tk main thread.
 
 Guards (in order):
   1. Confidence gate     - OCR mean confidence must clear a floor.
-  2. Valid-parse gate    - the text must parse to a real float.
+  2. Valid-parse gate    - the text must parse to a real float in [0, 100].
   3. Confirmation count  - value must exceed threshold for N consecutive valid
                            reads before the alarm fires.
   4. Hysteresis          - once firing, only clears after the value stays below
@@ -77,6 +77,10 @@ class Monitor:
         self._silenced = False
         self._alarm_cycles = 0  # ticks elapsed since the current alarm fired
         self._alarm_oneshot = False  # current alarm is a single non-looping pass
+        # Testmode latch: once detected it stays on (OCR of the keyword
+        # flickers) until the percent drops below the value seen at detection.
+        self._testmode_latched = False
+        self._testmode_latch_value: float | None = None
 
     # --- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -131,6 +135,8 @@ class Monitor:
         self._silenced = False
         self._alarm_cycles = 0
         self._alarm_oneshot = False
+        self._testmode_latched = False
+        self._testmode_latch_value = None
 
     # --- alarm control -----------------------------------------------------
     def _set_alarm(self, on: bool) -> None:
@@ -142,6 +148,13 @@ class Monitor:
             # sound): play a single non-looping pass and let it finish on its
             # own rather than looping until stopped.
             self._alarm_oneshot = (s.alarm_duration_cycles == 1)
+            if self._logger:
+                self._logger.log_event(
+                    f"ALARM FIRED (above={self._above}, threshold={s.threshold})")
+            # Click the mute toggle before starting playback so the alarm and
+            # the stream's mute flip happen together at the moment of firing.
+            if s.mute_toggle_enabled and s.mute_toggle_point:
+                self.click_mute_toggle(s.mute_toggle_point)
             try:
                 if s.alarm_wav:
                     if self._alarm_oneshot:
@@ -150,14 +163,9 @@ class Monitor:
                         self._player.play_loop(s.alarm_wav)
             except Exception:
                 pass
-            if self._logger:
-                self._logger.log_event(
-                    f"ALARM FIRED (above={self._above}, threshold={s.threshold})")
-            if s.mute_toggle_enabled and s.mute_toggle_point:
-                self.click_mute_toggle(s.mute_toggle_point)
         elif not on and self._alarm_on:
             self._alarm_on = False
-            # A one-shot pass is left to ring out; purging would clip it short.
+            # A one-shot pass is left to ring out; stopping would clip it short.
             if not self._alarm_oneshot:
                 try:
                     self._player.stop()
@@ -190,18 +198,41 @@ class Monitor:
 
         read = ocr.read_number(num_img, scale=s.scale, threshold=s.bw_threshold)
 
-        # Testmode detection.
-        testmode = False
+        # Testmode detection (raw OCR of the keyword for this frame).
+        detected = False
         if s.testmode_enabled and s.testmode_region:
             try:
                 t_img = capture.grab(s.testmode_region)
                 t_text = ocr.read_text(t_img, scale=max(2, s.scale - 1),
                                        threshold=s.bw_threshold)
-                testmode = ocr.keyword_present(t_text, s.keyword)
+                detected = ocr.keyword_present(t_text, s.keyword)
             except Exception:
-                testmode = False
+                detected = False
 
-        valid = (read.value is not None) and (read.confidence >= s.conf_threshold)
+        valid = (read.value is not None
+                 and 0.0 <= read.value <= 100.0
+                 and read.confidence >= s.conf_threshold)
+
+        # Latch testmode: the keyword OCR flickers, so once detected we hold the
+        # suppression until the percent reads lower than it was when testmode was
+        # first detected (i.e. the run restarted). The reference is captured on
+        # the first frame that has a readable percent.
+        if detected and not self._testmode_latched:
+            self._testmode_latched = True
+            self._testmode_latch_value = read.value if valid else None
+        elif (self._testmode_latched
+                and self._testmode_latch_value is None and valid):
+            # Latched before a readable percent was available: capture the
+            # reference from the first valid frame, even if the keyword is gone.
+            self._testmode_latch_value = read.value
+
+        if (self._testmode_latched and valid
+                and self._testmode_latch_value is not None
+                and read.value < self._testmode_latch_value):
+            self._testmode_latched = False
+            self._testmode_latch_value = None
+
+        testmode = self._testmode_latched
 
         if testmode:
             # Suppress completely and reset counters so nothing carries over.

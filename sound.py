@@ -1,9 +1,12 @@
 """Alarm sound generation and playback.
 
 Presets are synthesized into WAV files with the stdlib `wave` module on first
-run (no audio assets to ship). Playback uses `winsound` so we depend on nothing
-outside the standard library: a looping async PlaySound for the alarm, which we
-can stop instantly with SND_PURGE.
+run (no audio assets to ship). Playback uses the pygame-ce mixer, which opens
+the audio device once and keeps it warm: a single reserved channel plays a
+`Sound`, loops it gaplessly (``loops=-1``), and stops instantly via
+``Channel.stop()`` from any thread. This replaces the old `winsound` backend,
+whose per-call device open/close clipped onsets and whose process-global purge
+made stopping racy.
 """
 
 from __future__ import annotations
@@ -11,8 +14,11 @@ from __future__ import annotations
 import math
 import os
 import struct
+import threading
 import wave
-import winsound
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+import pygame
 
 SAMPLE_RATE = 44100
 AMPLITUDE = 22000  # out of 32767
@@ -108,32 +114,78 @@ def ensure_presets(presets_dir: str) -> dict[str, str]:
     return mapping
 
 
+# Mixer init is process-wide and lazy: importing this module (e.g. for
+# ensure_presets in tests or on a headless box) must not require an audio
+# device. _ensure_mixer() is idempotent and only runs when a player is created.
+_mixer_lock = threading.Lock()
+_mixer_ready = False
+
+
+def _ensure_mixer() -> bool:
+    """Initialise the pygame mixer once. Returns True if audio is available."""
+    global _mixer_ready
+    with _mixer_lock:
+        if _mixer_ready:
+            return True
+        try:
+            # Stereo, 16-bit, small buffer: mono presets and stereo custom WAVs
+            # both play, and the short buffer keeps latency low.
+            pygame.mixer.pre_init(SAMPLE_RATE, -16, 2, 512)
+            pygame.mixer.init()
+            _mixer_ready = True
+        except Exception:
+            _mixer_ready = False
+        return _mixer_ready
+
+
 class AlarmPlayer:
-    """Loops a WAV file asynchronously; stop() silences it immediately."""
+    """Plays a WAV through a reserved pygame mixer channel.
+
+    The mixer holds the audio device open for the player's lifetime, so onsets
+    aren't clipped by a cold start. Playback uses one dedicated channel:
+    ``play_once`` plays a single pass, ``play_loop`` loops gaplessly, and
+    ``stop`` silences instantly. Channel operations are safe to call from any
+    thread (the GUI thread and the monitor worker thread both do). If no audio
+    device is available the player degrades to a no-op rather than raising.
+    """
 
     def __init__(self) -> None:
-        self._playing = False
+        self._cache: dict[str, "pygame.mixer.Sound"] = {}
+        self._lock = threading.Lock()
+        self._channel = None
+        if _ensure_mixer():
+            self._channel = pygame.mixer.Channel(0)
 
     @property
     def is_playing(self) -> bool:
-        return self._playing
+        ch = self._channel
+        return bool(ch and ch.get_busy())
+
+    def _sound(self, wav_path: str) -> "pygame.mixer.Sound":
+        if not wav_path or not os.path.isfile(wav_path):
+            raise FileNotFoundError(wav_path)
+        snd = self._cache.get(wav_path)
+        if snd is None:
+            snd = pygame.mixer.Sound(wav_path)
+            self._cache[wav_path] = snd
+        return snd
+
+    def _play(self, wav_path: str, *, loops: int) -> None:
+        if self._channel is None:
+            return
+        snd = self._sound(wav_path)
+        with self._lock:
+            self._channel.play(snd, loops=loops)
 
     def play_loop(self, wav_path: str) -> None:
-        if not wav_path or not os.path.isfile(wav_path):
-            raise FileNotFoundError(wav_path)
-        winsound.PlaySound(
-            wav_path,
-            winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP,
-        )
-        self._playing = True
+        self._play(wav_path, loops=-1)
 
     def play_once(self, wav_path: str) -> None:
-        if not wav_path or not os.path.isfile(wav_path):
-            raise FileNotFoundError(wav_path)
-        winsound.PlaySound(
-            wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC
-        )
+        self._play(wav_path, loops=0)
 
     def stop(self) -> None:
-        winsound.PlaySound(None, winsound.SND_PURGE)
-        self._playing = False
+        ch = self._channel
+        if ch is None:
+            return
+        with self._lock:
+            ch.stop()
